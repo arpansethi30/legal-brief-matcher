@@ -5,7 +5,7 @@ import json
 import os
 from utils.data_loader import load_brief_pair, load_training_data
 from models.embedding_model import get_embeddings
-from models.similarity_model import calculate_similarity, get_top_matches
+from backup.similarity_model import calculate_similarity, get_top_matches
 from models.llm_verifier import verify_matches
 
 def main():
