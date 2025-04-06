@@ -418,3 +418,152 @@ class LegalNetworkVisualizer:
         if len(text) > max_length:
             return text[:max_length-3] + "..."
         return text
+    
+    def create_opposing_counsel_insight(self, match):
+        """Create a visualization of opposing counsel insights based on match analysis"""
+        # Initialize figure
+        fig, ax = plt.subplots(figsize=(10, 6), facecolor='#f9f9f9')
+        
+        # Set up basic styling
+        plt.title("Opposing Counsel Insight", fontsize=16, color='#333333', fontweight='bold')
+        ax.set_facecolor('#f9f9f9')
+        
+        # Get counter analysis from the match if available
+        counter_analysis = match.get('counter_analysis', {})
+        precedent_analysis = match.get('precedent_analysis', {})
+        
+        # Set up the sections we'll display
+        insight_sections = [
+            "Argument Strengths & Weaknesses",
+            "Precedent Analysis",
+            "Potential Counterarguments"
+        ]
+        
+        # Create a table structure
+        table_data = []
+        
+        # 1. Argument Strengths & Weaknesses
+        if counter_analysis and counter_analysis.get('strengths') and counter_analysis.get('weaknesses'):
+            strengths = counter_analysis.get('strengths', [])
+            weaknesses = counter_analysis.get('weaknesses', [])
+            
+            strengths_text = "\n".join([f"• {s}" for s in strengths if s])
+            weaknesses_text = "\n".join([f"• {s}" for s in weaknesses if s])
+            
+            # Add strength/weakness rows
+            table_data.append([
+                "STRENGTHS",
+                strengths_text
+            ])
+            
+            table_data.append([
+                "WEAKNESSES",
+                weaknesses_text
+            ])
+        else:
+            table_data.append([
+                "ANALYSIS",
+                "• The response argument addresses key points from the moving brief\n• Consider strengthening citation support\n• Watch for logical fallacies in reasoning"
+            ])
+        
+        # 2. Precedent Analysis
+        if precedent_analysis:
+            relative_strength = precedent_analysis.get('relative_strength', 0)
+            analysis_text = precedent_analysis.get('analysis', '')
+            
+            # Add precedent analysis with visual indicator
+            strength_indicator = ""
+            if relative_strength > 0.3:
+                strength_indicator = "⚠️ WEAKER PRECEDENTS THAN RESPONSE"
+            elif relative_strength < -0.3:
+                strength_indicator = "✓ STRONGER PRECEDENTS THAN RESPONSE"
+            else:
+                strength_indicator = "➖ COMPARABLE PRECEDENT STRENGTH"
+            
+            table_data.append([
+                "PRECEDENT STRENGTH",
+                f"{strength_indicator}\n{analysis_text}"
+            ])
+            
+            # Add key precedents
+            common_precedents = precedent_analysis.get('common_key_precedents', [])
+            if common_precedents:
+                precedent_list = "\n".join([f"• {p['name']} ({p['year']})" for p in common_precedents[:3]])
+                table_data.append([
+                    "KEY SHARED PRECEDENTS",
+                    precedent_list
+                ])
+        
+        # 3. Strategic Recommendations
+        # This section provides actual insights for opposing counsel
+        counter_quality = counter_analysis.get('counter_quality_score', 0.5)
+        reasoning = counter_analysis.get('reasoning', '')
+        
+        recommendations = []
+        
+        # Generate recommendations based on counter argument quality
+        if counter_quality < 0.4:
+            recommendations.append("The opposition's counter-argument is weak. Emphasize this point in reply.")
+        elif counter_quality > 0.7:
+            recommendations.append("Opposition has strong counter-arguments. Consider refining your position.")
+        
+        # Generate recommendations based on precedent strength
+        if precedent_analysis:
+            relative_strength = precedent_analysis.get('relative_strength', 0)
+            if relative_strength > 0.3:
+                recommendations.append("Opposition cites stronger precedents. Consider distinguishing these cases.")
+            elif relative_strength < -0.3:
+                recommendations.append("Your precedents are stronger. Emphasize their authority in reply.")
+        
+        # Add some general strategic recommendations
+        if match.get('shared_citations'):
+            num_shared = len(match.get('shared_citations', []))
+            recommendations.append(f"Both briefs cite {num_shared} common authorities. Address opposition's interpretation.")
+        
+        # Add custom recommendations based on the combination of factors
+        if counter_quality > 0.6 and precedent_analysis.get('relative_strength', 0) > 0.2:
+            recommendations.append("⚠️ VULNERABLE POSITION: Opposition has both strong arguments and precedents.")
+        elif counter_quality < 0.4 and precedent_analysis.get('relative_strength', 0) < -0.2:
+            recommendations.append("✓ STRONG POSITION: Your argument has stronger reasoning and precedential support.")
+        
+        # Add recommendations to table
+        recommendation_text = "\n".join([f"• {r}" for r in recommendations])
+        table_data.append([
+            "STRATEGIC RECOMMENDATIONS",
+            recommendation_text
+        ])
+        
+        # Create the table
+        table = ax.table(
+            cellText=table_data,
+            colWidths=[0.25, 0.65],
+            loc='center',
+            cellLoc='left'
+        )
+        
+        # Style the table
+        table.auto_set_font_size(False)
+        table.set_fontsize(9)
+        table.scale(1, 1.5)
+        
+        # Style header cells differently
+        for i, cell in enumerate(table._cells):
+            if cell[1] == 0:  # Column 0 - headers
+                table._cells[cell].set_text_props(
+                    fontweight='bold', 
+                    color='white'
+                )
+                table._cells[cell].set_facecolor('#1E5AA8')
+                table._cells[cell].set_edgecolor('white')
+            else:
+                table._cells[cell].set_edgecolor('#dddddd')
+                
+            if i % 2 == 0:  # Add alternating row colors
+                if cell[1] == 1:  # Only apply to content cells
+                    table._cells[cell].set_facecolor('#f0f0f0')
+        
+        # Remove axes
+        ax.axis('off')
+        ax.axis('tight')
+        
+        return fig

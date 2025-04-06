@@ -6,6 +6,7 @@ import heapq
 from collections import defaultdict
 import re
 from models.legal_transformer import LegalBERT
+from models.llama_analyzer import LlamaLegalAnalyzer
 
 class LegalArgumentMatcher:
     """Specialized legal argument matching system"""
@@ -13,6 +14,16 @@ class LegalArgumentMatcher:
     def __init__(self):
         self.legal_bert = LegalBERT()
         self.section_patterns = self._load_section_patterns()
+        # Only initialize LlamaLegalAnalyzer if needed, to save resources
+        self.llama_analyzer = None
+        self.use_llama = False
+    
+    def _init_llama_analyzer(self):
+        """Lazy initialization of Llama analyzer only when needed"""
+        if not self.llama_analyzer:
+            from models.llama_analyzer import LlamaLegalAnalyzer
+            self.llama_analyzer = LlamaLegalAnalyzer()
+            self.use_llama = self.llama_analyzer.is_available
     
     def _load_section_patterns(self):
         """Load patterns for matching brief sections"""
@@ -113,15 +124,24 @@ class LegalArgumentMatcher:
         return False
     
     def analyze_brief_pair(self, brief_pair):
-        """Analyze a brief pair and generate matches"""
+        """Analyze a brief pair and generate matches with optimized performance"""
         moving_arguments = brief_pair["moving_brief"]["brief_arguments"]
         response_arguments = brief_pair["response_brief"]["brief_arguments"]
         
+        # Limit the number of arguments to analyze to prevent excessive CPU usage
+        max_args = 15
+        moving_arguments = moving_arguments[:max_args] if len(moving_arguments) > max_args else moving_arguments
+        response_arguments = response_arguments[:max_args] if len(response_arguments) > max_args else response_arguments
+        
         # Generate all pairwise comparisons
         comparisons = []
+        # Use progress tracking to allow for interruption
+        total_comparisons = len(moving_arguments) * len(response_arguments)
+        print(f"Processing {total_comparisons} argument pairs...")
+        
         for i, moving_arg in enumerate(moving_arguments):
             for j, response_arg in enumerate(response_arguments):
-                # First check structural matches
+                # First check structural matches (cheap operation)
                 heading_match = self.is_counter_argument(moving_arg["heading"], response_arg["heading"])
                 
                 # Then get detailed comparison
@@ -135,22 +155,55 @@ class LegalArgumentMatcher:
                     response_arg=response_arg
                 )
                 
+                # Only do expensive Llama analysis for high-confidence matches
+                counter_arg_analysis = {}
+                if enhanced_confidence > 0.6 and self.use_llama:
+                    try:
+                        # Lazy initialization of Llama analyzer
+                        self._init_llama_analyzer()
+                        if self.llama_analyzer and self.llama_analyzer.is_available:
+                            counter_arg_analysis = self.llama_analyzer.analyze_counter_argument(
+                                moving_arg, response_arg
+                            )
+                            
+                            # Use the counter argument quality score to slightly adjust the confidence
+                            counter_quality = counter_arg_analysis.get("counter_quality_score", 0.0)
+                            # Apply a smaller adjustment to avoid overwhelming other factors
+                            counter_quality_boost = counter_quality * 0.15
+                            enhanced_confidence = min(1.0, enhanced_confidence + counter_quality_boost)
+                            
+                            # Add to confidence factors
+                            confidence_factors["counter_quality"] = {
+                                'value': round(counter_quality_boost, 3),
+                                'explanation': f"LLM analysis determined this is a {counter_quality*10:.1f}/10 quality counter-argument"
+                            }
+                            confidence_factors["final_score"]["value"] = round(enhanced_confidence, 3)
+                    except Exception as e:
+                        print(f"Error in Llama analysis: {str(e)}")
+                
                 # Add to comparisons
                 comparisons.append({
                     'moving_index': i,
                     'response_index': j,
                     'moving_heading': moving_arg["heading"],
                     'response_heading': response_arg["heading"],
-                    'moving_content': moving_arg["content"],
-                    'response_content': response_arg["content"],
+                    'moving_content': moving_arg["content"][:1000],  # Limit content size in memory
+                    'response_content': response_arg["content"][:1000],  # Limit content size in memory
                     'similarity': comparison['similarity'],
                     'legal_boost': comparison['legal_boost'],
                     'enhanced_similarity': enhanced_confidence,
                     'confidence_factors': confidence_factors,
                     'heading_match': heading_match,
-                    'shared_citations': comparison['shared_citations'],
-                    'argument_pairs': comparison['argument_pairs']
+                    'shared_citations': comparison['shared_citations'][:10],  # Limit number of citations
+                    'argument_pairs': comparison['argument_pairs'],
+                    'counter_analysis': counter_arg_analysis
                 })
+                
+                # Clear memory periodically
+                if (i * len(response_arguments) + j + 1) % 20 == 0:
+                    import gc
+                    gc.collect()
+                    print(f"Processed {i * len(response_arguments) + j + 1}/{total_comparisons} comparisons...")
         
         # Sort by enhanced similarity
         comparisons.sort(key=lambda x: x['enhanced_similarity'], reverse=True)
@@ -159,7 +212,7 @@ class LegalArgumentMatcher:
     
     def calculate_enhanced_confidence(self, comparison, heading_match=False, moving_arg=None, response_arg=None):
         """
-        Calculate enhanced confidence score with detailed breakdown of factors
+        Calculate enhanced confidence score with detailed breakdown of factors and explanations
         """
         # Base similarity
         base_similarity = comparison['similarity']
@@ -185,6 +238,14 @@ class LegalArgumentMatcher:
             length_penalty = 0.1 * (1 - length_ratio)  # Max penalty of 0.1
         else:
             length_penalty = 0
+            length_ratio = 1.0
+        
+        # Precedent strength impact
+        precedent_impact = 0.0
+        if 'precedent_analysis' in comparison:
+            # Add a small boost if response has strong precedents
+            precedent_rel_strength = comparison['precedent_analysis'].get('relative_strength', 0.0)
+            precedent_impact = abs(precedent_rel_strength) * 0.05  # Small boost based on precedent strength
         
         # Combined confidence with ceiling
         enhanced_confidence = min(1.0, 
@@ -193,55 +254,96 @@ class LegalArgumentMatcher:
                                  + heading_boost 
                                  + legal_terminology_boost
                                  + pattern_boost
+                                 + precedent_impact
                                  - length_penalty)
         
-        # Create detailed confidence factors explanation
+        # Create detailed confidence factors explanation with explanations for the judges
         confidence_factors = {
-            'base_similarity': round(base_similarity, 3),
-            'citation_boost': round(citation_boost, 3),
-            'heading_match': round(heading_boost, 3),
-            'legal_terminology': round(legal_terminology_boost, 3),
-            'pattern_match': round(pattern_boost, 3),
-            'length_penalty': round(length_penalty, 3),
-            'final_score': round(enhanced_confidence, 3)
+            'base_similarity': {
+                'value': round(base_similarity, 3),
+                'explanation': f"Semantic similarity of {round(base_similarity*100, 1)}% between the arguments based on legal-domain language model"
+            },
+            'citation_boost': {
+                'value': round(citation_boost, 3),
+                'explanation': f"Boost of {round(citation_boost*100, 1)}% for {citation_count} shared legal citations between the briefs"
+            },
+            'heading_match': {
+                'value': round(heading_boost, 3),
+                'explanation': "15% boost applied for matching argument section headings" if heading_match else "No boost applied for headings (no structural match)"
+            },
+            'legal_terminology': {
+                'value': round(legal_terminology_boost, 3),
+                'explanation': f"Legal domain terminology boost of {round(legal_terminology_boost*100, 1)}% based on shared legal tests and standards"
+            },
+            'pattern_match': {
+                'value': round(pattern_boost, 3),
+                'explanation': "10% boost for detected counter-argument patterns" if pattern_boost > 0 else "No counter-argument patterns detected"
+            },
+            'length_penalty': {
+                'value': round(length_penalty, 3),
+                'explanation': f"Penalty of {round(length_penalty*100, 1)}% due to length disparity (ratio: {round(length_ratio, 2)})"
+            },
+            'precedent_impact': {
+                'value': round(precedent_impact, 3),
+                'explanation': f"Impact of {round(precedent_impact*100, 1)}% from precedent strength analysis"
+            },
+            'final_score': {
+                'value': round(enhanced_confidence, 3),
+                'explanation': f"Final confidence score of {round(enhanced_confidence*100, 1)}% indicates " + 
+                              ("strong" if enhanced_confidence > 0.7 else 
+                               "moderate" if enhanced_confidence > 0.5 else "weak") + 
+                              " match between arguments"
+            }
         }
+        
+        # Simplified return format for existing code compatibility
+        simplified_factors = {k: v['value'] for k, v in confidence_factors.items()}
         
         return enhanced_confidence, confidence_factors
     
     def generate_optimal_matches(self, comparisons, moving_count, response_count):
-        """Generate optimal matches using Hungarian algorithm"""
-        # Initialize cost matrix (negative similarity to convert to cost)
-        cost_matrix = np.ones((moving_count, response_count)) * 2.0  # Initialize with high cost
+        """Generate optimal matches using Hungarian algorithm with fallback for large matrices"""
+        # For large brief pairs, limit the size of analysis to prevent excessive CPU usage
+        max_dimensions = 20  # Maximum dimensions to use Hungarian algorithm
         
-        # Fill in costs
-        for comp in comparisons:
-            i, j = comp['moving_index'], comp['response_index']
-            # Convert similarity to cost (lower is better)
-            cost_matrix[i, j] = 1.0 - comp['enhanced_similarity']
-        
-        # Run Hungarian algorithm to find optimal assignments
-        try:
-            from scipy.optimize import linear_sum_assignment
-            row_ind, col_ind = linear_sum_assignment(cost_matrix)
+        if moving_count <= max_dimensions and response_count <= max_dimensions:
+            # Initialize cost matrix (negative similarity to convert to cost)
+            cost_matrix = np.ones((moving_count, response_count)) * 2.0  # Initialize with high cost
             
-            # Extract optimal matches
-            optimal_matches = []
-            for i, j in zip(row_ind, col_ind):
-                # Only include matches above a minimum confidence threshold
-                match_confidence = 1.0 - cost_matrix[i, j]
-                if match_confidence >= 0.35:  # Minimum threshold for matches
-                    # Find the original comparison data
-                    for comp in comparisons:
-                        if comp['moving_index'] == i and comp['response_index'] == j:
-                            optimal_matches.append(comp)
-                            break
+            # Fill in costs
+            for comp in comparisons:
+                i, j = comp['moving_index'], comp['response_index']
+                # Convert similarity to cost (lower is better)
+                cost_matrix[i, j] = 1.0 - comp['enhanced_similarity']
             
-            # Sort by moving index to maintain original brief order
-            optimal_matches.sort(key=lambda x: x['moving_index'])
-            
-            return optimal_matches
-        except:
-            # Fall back to greedy algorithm if scipy not available
+            # Run Hungarian algorithm to find optimal assignments
+            try:
+                from scipy.optimize import linear_sum_assignment
+                row_ind, col_ind = linear_sum_assignment(cost_matrix)
+                
+                # Extract optimal matches
+                optimal_matches = []
+                for i, j in zip(row_ind, col_ind):
+                    # Only include matches above a minimum confidence threshold
+                    match_confidence = 1.0 - cost_matrix[i, j]
+                    if match_confidence >= 0.35:  # Minimum threshold for matches
+                        # Find the original comparison data
+                        for comp in comparisons:
+                            if comp['moving_index'] == i and comp['response_index'] == j:
+                                optimal_matches.append(comp)
+                                break
+                
+                # Sort by moving index to maintain original brief order
+                optimal_matches.sort(key=lambda x: x['moving_index'])
+                
+                return optimal_matches
+            except Exception as e:
+                print(f"Error in Hungarian algorithm: {str(e)}, falling back to greedy algorithm")
+                # Fall back to greedy algorithm if scipy not available or error occurs
+                return self.greedy_matches(comparisons, moving_count)
+        else:
+            print(f"Brief pair too large ({moving_count}x{response_count}), using greedy matching")
+            # For large matrices, use greedy algorithm
             return self.greedy_matches(comparisons, moving_count)
     
     def greedy_matches(self, comparisons, moving_count):
@@ -329,12 +431,12 @@ class LegalArgumentMatcher:
             factors = match['confidence_factors']
             significant_factors = []
             
-            if factors['citation_boost'] > 0.05:
-                significant_factors.append(f"shared legal citations (contributing +{factors['citation_boost']:.2f})")
-            if factors['heading_match'] > 0:
-                significant_factors.append(f"matching argument structure (+{factors['heading_match']:.2f})")
-            if factors['legal_terminology'] > 0.05:
-                significant_factors.append(f"shared legal terminology (+{factors['legal_terminology']:.2f})")
+            if factors['citation_boost']['value'] > 0.05:
+                significant_factors.append(f"shared legal citations (contributing +{factors['citation_boost']['value']:.2f})")
+            if factors['heading_match']['value'] > 0:
+                significant_factors.append(f"matching argument structure (+{factors['heading_match']['value']:.2f})")
+            if factors['legal_terminology']['value'] > 0.05:
+                significant_factors.append(f"shared legal terminology (+{factors['legal_terminology']['value']:.2f})")
             
             if significant_factors:
                 explanation_parts.append(f"Match strength enhanced by: {', '.join(significant_factors)}")
