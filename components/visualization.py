@@ -333,7 +333,7 @@ class LegalNetworkVisualizer:
         
         # Add base similarity
         labels.append('Base Similarity')
-        values.append(factors.get('base_similarity', 0))
+        values.append(factors.get('base_similarity', {}).get('value', 0) if isinstance(factors.get('base_similarity'), dict) else factors.get('base_similarity', 0))
         colors.append('#3498DB')  # Blue
         
         # Add positive factors
@@ -341,19 +341,24 @@ class LegalNetworkVisualizer:
             ('citation_boost', '#27AE60'),  # Green
             ('heading_match', '#9B59B6'),  # Purple
             ('legal_terminology', '#F1C40F'),  # Yellow
-            ('pattern_match', '#E67E22')  # Orange
+            ('pattern_match', '#E67E22'),  # Orange
+            ('precedent_impact', '#16A085')  # Teal
         ]:
-            if factors.get(factor, 0) > 0:
-                labels.append(factor.replace('_', ' ').title())
-                values.append(factors.get(factor, 0))
-                colors.append(color)
+            if factor in factors:
+                factor_value = factors.get(factor, {}).get('value', 0) if isinstance(factors.get(factor), dict) else factors.get(factor, 0)
+                if factor_value > 0:
+                    labels.append(factor.replace('_', ' ').title())
+                    values.append(factor_value)
+                    colors.append(color)
         
         # Add penalties
         for factor in ['length_penalty']:
-            if factors.get(factor, 0) > 0:
-                labels.append(factor.replace('_', ' ').title())
-                values.append(-factors.get(factor, 0))  # Negative value for penalty
-                colors.append('#E74C3C')  # Red for penalties
+            if factor in factors:
+                factor_value = factors.get(factor, {}).get('value', 0) if isinstance(factors.get(factor), dict) else factors.get(factor, 0)
+                if factor_value > 0:
+                    labels.append(factor.replace('_', ' ').title())
+                    values.append(-factor_value)  # Negative value for penalty
+                    colors.append('#E74C3C')  # Red for penalties
         
         # Create figure
         fig, ax = plt.subplots(figsize=(8, 2.5))
@@ -370,9 +375,10 @@ class LegalNetworkVisualizer:
                    va='center', ha='left' if width >= 0 else 'right', color='black', fontsize=8)
         
         # Add final score line
-        if 'final_score' in factors:
-            ax.axvline(x=factors['final_score'], color='black', linestyle='--', linewidth=1)
-            ax.text(factors['final_score'], len(labels), f"Final: {factors['final_score']:.2f}", 
+        final_score = factors.get('final_score', {}).get('value', 0) if isinstance(factors.get('final_score'), dict) else factors.get('final_score', 0)
+        if final_score > 0:
+            ax.axvline(x=final_score, color='black', linestyle='--', linewidth=1)
+            ax.text(final_score, len(labels), f"Final: {final_score:.2f}", 
                    ha='center', va='bottom', fontsize=10, fontweight='bold')
         
         # Customize plot

@@ -431,12 +431,17 @@ class LegalArgumentMatcher:
             factors = match['confidence_factors']
             significant_factors = []
             
-            if factors['citation_boost']['value'] > 0.05:
-                significant_factors.append(f"shared legal citations (contributing +{factors['citation_boost']['value']:.2f})")
-            if factors['heading_match']['value'] > 0:
-                significant_factors.append(f"matching argument structure (+{factors['heading_match']['value']:.2f})")
-            if factors['legal_terminology']['value'] > 0.05:
-                significant_factors.append(f"shared legal terminology (+{factors['legal_terminology']['value']:.2f})")
+            # Handle dictionary format with 'value' key
+            citation_boost_value = factors['citation_boost']['value'] if isinstance(factors['citation_boost'], dict) else factors['citation_boost']
+            heading_match_value = factors['heading_match']['value'] if isinstance(factors['heading_match'], dict) else factors['heading_match']
+            legal_terminology_value = factors['legal_terminology']['value'] if isinstance(factors['legal_terminology'], dict) else factors['legal_terminology']
+            
+            if citation_boost_value > 0.05:
+                significant_factors.append(f"shared legal citations (contributing +{citation_boost_value:.2f})")
+            if heading_match_value > 0:
+                significant_factors.append(f"matching argument structure (+{heading_match_value:.2f})")
+            if legal_terminology_value > 0.05:
+                significant_factors.append(f"shared legal terminology (+{legal_terminology_value:.2f})")
             
             if significant_factors:
                 explanation_parts.append(f"Match strength enhanced by: {', '.join(significant_factors)}")

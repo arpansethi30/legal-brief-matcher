@@ -347,12 +347,34 @@ class LegalDataProcessor:
         return round(complexity, 1)
     
     def format_results_for_export(self, matches):
-        """Format results for JSON export in Bloomberg challenge format"""
+        """Format results for export to JSON"""
         export_data = []
         
-        # Format as [moving_heading, response_heading] pairs
         for match in matches:
-            export_data.append([match['moving_heading'], match['response_heading']])
+            # Extract confidence factors with proper handling of dict format and NumPy types
+            confidence_factors = {}
+            if 'confidence_factors' in match:
+                for key, value in match['confidence_factors'].items():
+                    if isinstance(value, dict) and 'value' in value:
+                        # Convert any NumPy types to native Python types
+                        confidence_factors[key] = float(value['value'])
+                    else:
+                        # Convert any NumPy types to native Python types
+                        confidence_factors[key] = float(value) if hasattr(value, 'item') else value
+            
+            # Format match data with proper type conversion
+            match_data = {
+                'moving_heading': match['moving_heading'],
+                'response_heading': match['response_heading'],
+                'confidence': float(match['confidence']) if hasattr(match['confidence'], 'item') else match['confidence'],
+                'confidence_factors': confidence_factors,
+                'explanation': match.get('explanation', ''),
+                'shared_citations': match.get('shared_citations', []),
+                'moving_index': int(match.get('moving_index', 0)) if hasattr(match.get('moving_index', 0), 'item') else match.get('moving_index', 0),
+                'response_index': int(match.get('response_index', 0)) if hasattr(match.get('response_index', 0), 'item') else match.get('response_index', 0)
+            }
+            
+            export_data.append(match_data)
         
         return export_data
     

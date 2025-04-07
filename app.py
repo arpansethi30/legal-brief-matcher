@@ -55,10 +55,12 @@ st.markdown("""
 .moving-brief {
     background-color: #EBF5FB;
     border-left: 5px solid #3498DB;
+    color: #2C3E50;  /* Dark blue-gray text color for better readability */
 }
 .response-brief {
     background-color: #FDEDEC;
     border-left: 5px solid #E74C3C;
+    color: #2C3E50;  /* Dark blue-gray text color for better readability */
 }
 .confidence-high {
     color: #27AE60;
@@ -160,6 +162,132 @@ except:
 
 # Load components
 matcher, visualizer, processor = load_components()
+
+# Function to display matches with detailed explanations for judges
+def display_matches_with_explanation(formatted_matches):
+    """Display the match results in a visually appealing way with judge explanations"""
+    if not formatted_matches:
+        st.warning("No matches found. Try adjusting your parameters.")
+        return
+    
+    # Sort by confidence
+    sorted_matches = sorted(formatted_matches, key=lambda x: x['confidence'], reverse=True)
+    
+    for i, match in enumerate(sorted_matches):
+        # Get explanations
+        explanation = match.get('explanation', '')
+        
+        # Get confidence class
+        confidence = match['confidence']
+        if confidence >= 0.7:
+            confidence_class = "confidence-high"
+        elif confidence >= 0.5:
+            confidence_class = "confidence-medium"
+        else:
+            confidence_class = "confidence-low"
+        
+        # Display match header with confidence
+        st.markdown(f"""
+        <div class="match-detail-container">
+            <h3>Match {i+1}: <span class='{confidence_class}'>{confidence:.2f} confidence</span></h3>
+            <p><em>{explanation}</em></p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Create tabs
+        tabs = st.tabs(["Side by Side", "Details", "Confidence Analysis", "Explanation for Judges"])
+        
+        # Side by Side tab
+        with tabs[0]:
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.markdown(f"""
+                <div class="match-box moving-brief">
+                    <h4>{match['moving_heading']}</h4>
+                    <div>{match['moving_content'][:500] + "..." if len(match['moving_content']) > 500 else match['moving_content']}</div>
+                </div>
+                """, unsafe_allow_html=True)
+            
+            with col2:
+                st.markdown(f"""
+                <div class="match-box response-brief">
+                    <h4>{match['response_heading']}</h4>
+                    <div>{match['response_content'][:500] + "..." if len(match['response_content']) > 500 else match['response_content']}</div>
+                </div>
+                """, unsafe_allow_html=True)
+        
+        # Details tab
+        with tabs[1]:
+            if match.get('shared_citations'):
+                st.subheader("Shared Citations")
+                for citation in match['shared_citations']:
+                    st.markdown(f"- {citation}")
+            
+            if match.get('shared_terms'):
+                st.subheader("Shared Legal Terms")
+                st.write(", ".join(match['shared_terms']))
+        
+        # Confidence Analysis tab
+        with tabs[2]:
+            if 'confidence_factors' in match:
+                confidence_fig = visualizer.create_confidence_breakdown(match)
+                st.pyplot(confidence_fig)
+        
+        # Explanation for Judges tab
+        with tabs[3]:
+            if 'confidence_factors' in match:
+                factors = match['confidence_factors']
+                
+                # Get final score explanation
+                final_score = factors.get('final_score', {})
+                if isinstance(final_score, dict) and 'explanation' in final_score:
+                    final_score_value = final_score.get('value', 0)
+                    final_score_explanation = final_score.get('explanation', '')
+                    st.markdown(f"### Overall Match Score: {final_score_value:.3f}")
+                    st.markdown(f"**{final_score_explanation}**")
+                else:
+                    st.markdown(f"### Overall Match Score: {factors.get('final_score', 0):.3f}")
+                
+                st.markdown("### Detailed Factor Breakdown:")
+                
+                # Create two columns for the factors
+                col1, col2 = st.columns(2)
+                
+                # List of factors to display with their display names and column
+                factors_list = [
+                    ('base_similarity', 'Base Similarity', col1),
+                    ('citation_boost', 'Citation Boost', col1),
+                    ('heading_match', 'Heading Match', col1),
+                    ('legal_terminology', 'Legal Terminology', col2),
+                    ('pattern_match', 'Argument Pattern Match', col2),
+                    ('length_penalty', 'Length Disparity Penalty', col2),
+                    ('precedent_impact', 'Precedent Impact', col1)
+                ]
+                
+                # Display each factor with its explanation
+                for key, label, col in factors_list:
+                    if key in factors:
+                        factor = factors[key]
+                        if isinstance(factor, dict) and 'value' in factor:
+                            with col:
+                                st.markdown(f"**{label}**: {factor['value']:.3f}")
+                                if 'explanation' in factor:
+                                    st.markdown(f"<div style='padding-left:20px; color:#666; font-size:0.9em'>{factor['explanation']}</div>", unsafe_allow_html=True)
+                        else:
+                            with col:
+                                st.markdown(f"**{label}**: {factor:.3f}")
+                
+                # Provide overall recommendation
+                st.markdown("### Recommendation for Judges:")
+                if confidence > 0.7:
+                    st.markdown("🟢 **Strong match** - High confidence that these arguments are directly addressing each other")
+                elif confidence > 0.5:
+                    st.markdown("🟡 **Moderate match** - These arguments likely address similar points but may have differences in approach")
+                else:
+                    st.markdown("🔴 **Weak match** - Some similarities exist, but these may be addressing different aspects")
+        
+        st.markdown("---")
 
 # Main application header
 st.markdown("<h1 class='legal-header'>Legal Brief Matcher:<br>Argument-Counter Argument Analyzer</h1>", unsafe_allow_html=True)
@@ -339,137 +467,7 @@ if uploaded_file is not None or use_example:
                         
                         # Display detailed matches
                         st.subheader("Detailed Matches")
-                        
-                        for i, match in enumerate(formatted_matches):
-                            # Determine confidence class
-                            confidence = match['confidence']
-                            if confidence >= 0.7:
-                                confidence_class = "confidence-high"
-                            elif confidence >= 0.5:
-                                confidence_class = "confidence-medium"
-                            else:
-                                confidence_class = "confidence-low"
-                            
-                            # Create match container
-                            st.markdown(f"""
-                            <div class="match-detail-container">
-                                <h3>Match {i+1}: <span class='{confidence_class}'>{confidence:.2f} confidence</span></h3>
-                            </div>
-                            """, unsafe_allow_html=True)
-                            
-                            # Create tabs for different views of the match
-                            tabs = st.tabs(["Side by Side", "Details", "Confidence Analysis", "Citations", "Opposing Counsel Insight"])
-                            
-                            with tabs[0]:  # Side by Side View
-                                col1, col2 = st.columns(2)
-                                
-                                # Format content previews with highlighting
-                                moving_content = match['moving_content'][:500] + "..." if len(match['moving_content']) > 500 else match['moving_content']
-                                response_content = match['response_content'][:500] + "..." if len(match['response_content']) > 500 else match['response_content']
-                                
-                                # Highlight text with shared citations and key terms
-                                moving_highlighted = visualizer.highlight_matching_text(
-                                    moving_content, 
-                                    terms=match.get('shared_terms', []),
-                                    citations=match.get('shared_citations', [])
-                                )
-                                
-                                response_highlighted = visualizer.highlight_matching_text(
-                                    response_content,
-                                    terms=match.get('shared_terms', []),
-                                    citations=match.get('shared_citations', [])
-                                )
-                                
-                                with col1:
-                                    st.markdown(f"""
-                                    <div class="match-box moving-brief">
-                                        <h4>{match['moving_heading']}</h4>
-                                        <div>{moving_highlighted}</div>
-                                    </div>
-                                    """, unsafe_allow_html=True)
-                                
-                                with col2:
-                                    st.markdown(f"""
-                                    <div class="match-box response-brief">
-                                        <h4>{match['response_heading']}</h4>
-                                        <div>{response_highlighted}</div>
-                                    </div>
-                                    """, unsafe_allow_html=True)
-                            
-                            with tabs[1]:  # Details View
-                                # Display match explanation
-                                st.markdown(f"**Match Rationale:** {match['explanation']}")
-                                
-                                # Display argument type if available
-                                if 'argument_type' in match:
-                                    st.markdown(f"**Argument Type:** {match['argument_type'].capitalize()}")
-                                
-                                # Display counter strength if available
-                                if 'counter_strength' in match:
-                                    st.markdown(f"**Counter Strength:** {match['counter_strength']}/10")
-                                
-                                # Display shared terms if available
-                                if match.get('shared_terms'):
-                                    st.markdown("**Shared Legal Terms:**")
-                                    term_cols = st.columns(5)
-                                    for i, term in enumerate(match['shared_terms']):
-                                        col_idx = i % 5
-                                        with term_cols[col_idx]:
-                                            st.markdown(f"<span class='citation'>{term}</span>", unsafe_allow_html=True)
-                            
-                            with tabs[2]:  # Confidence Analysis View
-                                if 'confidence_factors' in match:
-                                    st.markdown("<div class='confidence-breakdown'>", unsafe_allow_html=True)
-                                    st.markdown("**Confidence Score Breakdown:**")
-                                    
-                                    # Create confidence breakdown visualization
-                                    confidence_fig = visualizer.create_confidence_breakdown(match)
-                                    st.pyplot(confidence_fig)
-                                    
-                                    # Display raw factor values
-                                    with st.expander("View Raw Factor Values"):
-                                        factors_df = pd.DataFrame([match['confidence_factors']])
-                                        st.dataframe(factors_df.T)
-                                    
-                                    st.markdown("</div>", unsafe_allow_html=True)
-                                else:
-                                    st.info("Detailed confidence analysis not available for this match.")
-                            
-                            with tabs[3]:  # Citations View
-                                if match.get('shared_citations'):
-                                    st.markdown("**Shared Legal Citations:**")
-                                    citations_df = visualizer.create_shared_citation_table(match['shared_citations'])
-                                    st.dataframe(citations_df)
-                                else:
-                                    st.info("No shared citations found between these arguments.")
-                            
-                            with tabs[4]:  # NEW: Opposing Counsel Insight View
-                                st.markdown("### Opposing Counsel Insight")
-                                st.markdown("This analysis provides strategic insights from the perspective of opposing counsel.")
-                                
-                                # Check if we have counter analysis data
-                                if match.get('counter_analysis') or match.get('precedent_analysis'):
-                                    # Generate the opposing counsel insight visualization
-                                    insight_fig = visualizer.create_opposing_counsel_insight(match)
-                                    st.pyplot(insight_fig)
-                                    
-                                    # If we have counter analysis reasoning, show it
-                                    if match.get('counter_analysis') and match['counter_analysis'].get('reasoning'):
-                                        with st.expander("Detailed Counter-Argument Analysis"):
-                                            st.markdown(f"**Analysis:** {match['counter_analysis']['reasoning']}")
-                                    
-                                    # If we have precedent analysis, offer a more detailed view
-                                    if match.get('precedent_analysis'):
-                                        with st.expander("Detailed Precedent Analysis"):
-                                            precedent_analysis = match['precedent_analysis']
-                                            st.markdown(f"**Moving Brief Precedent Strength:** {precedent_analysis.get('moving_strength', 0):.2f}")
-                                            st.markdown(f"**Response Brief Precedent Strength:** {precedent_analysis.get('response_strength', 0):.2f}")
-                                            st.markdown(f"**Relative Strength:** {precedent_analysis.get('relative_strength', 0):.2f}")
-                                            st.markdown(f"**Analysis:** {precedent_analysis.get('analysis', '')}")
-                                else:
-                                    st.info("Advanced legal analysis not available for this match. Try running with Llama 3.1 enabled.")
-                            
-                            st.markdown("---")
+                        display_matches_with_explanation(formatted_matches)
                         
                         # Export results
                         export_data = processor.format_results_for_export(formatted_matches)
@@ -646,77 +644,6 @@ class FallbackMatcher:
             formatted_matches.append(formatted_match)
         
         return formatted_matches
-
-def display_match_results(match_results):
-    # Display the match results in a visually appealing way
-    if not match_results:
-        st.warning("No matches found. Try adjusting your parameters.")
-        return
-    
-    # Sort by confidence
-    sorted_matches = sorted(match_results, key=lambda x: x['confidence'], reverse=True)
-    
-    for i, match in enumerate(sorted_matches):
-        with st.expander(f"Match {i+1}: {match['moving_section']} vs {match['response_section']} (Confidence: {match['confidence']:.2f})", expanded=i==0):
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.subheader("Moving Brief")
-                st.markdown(f"**Section: {match['moving_section']}**")
-                st.markdown(match['moving_text'])
-                
-            with col2:
-                st.subheader("Response Brief")
-                st.markdown(f"**Section: {match['response_section']}**")
-                st.markdown(match['response_text'])
-            
-            # Enhanced details display
-            with st.expander("Match Details"):
-                st.subheader("Shared Citations")
-                if match['shared_citations']:
-                    for citation in match['shared_citations']:
-                        st.markdown(f"- {citation}")
-                else:
-                    st.write("No shared citations found.")
-                
-                # Add confidence factors visualization with explanations
-                if 'confidence_factors' in match:
-                    st.subheader("Explanation for Judges")
-                    
-                    # Final score explanation
-                    st.markdown(f"### Overall Match Score: {match['confidence_factors']['final_score']['value']:.3f}")
-                    st.markdown(f"**{match['confidence_factors']['final_score']['explanation']}**")
-                    
-                    st.markdown("### Detailed Factor Breakdown:")
-                    
-                    # Create two columns for the factors
-                    col1, col2 = st.columns(2)
-                    
-                    factors_list = [
-                        ('base_similarity', 'Base Similarity', col1),
-                        ('citation_boost', 'Citation Boost', col1),
-                        ('heading_match', 'Heading Match', col1),
-                        ('legal_terminology', 'Legal Terminology', col2),
-                        ('pattern_match', 'Argument Pattern Match', col2),
-                        ('length_penalty', 'Length Disparity Penalty', col2),
-                        ('precedent_impact', 'Precedent Impact', col1)
-                    ]
-                    
-                    for key, label, col in factors_list:
-                        if key in match['confidence_factors']:
-                            factor = match['confidence_factors'][key]
-                            with col:
-                                st.markdown(f"**{label}**: {factor['value']:.3f}")
-                                st.markdown(f"<div style='padding-left:20px; color:#666; font-size:0.9em'>{factor['explanation']}</div>", unsafe_allow_html=True)
-                    
-                    # Provide overall recommendation for judges
-                    st.markdown("### Recommendation for Judges:")
-                    if match['confidence'] > 0.7:
-                        st.markdown("🟢 **Strong match** - High confidence that these arguments are directly addressing each other")
-                    elif match['confidence'] > 0.5:
-                        st.markdown("🟡 **Moderate match** - These arguments likely address similar points but may have differences in approach")
-                    else:
-                        st.markdown("🔴 **Weak match** - Some similarities exist, but these may be addressing different aspects")
 
 # Clean up when exiting
 def _handle_exit():
